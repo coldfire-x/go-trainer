@@ -3,10 +3,23 @@ from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 from ..models.go_board import GoBoard, StoneColor
 from ..models.life_death import LifeDeathAnalyzer
+from fastapi import APIRouter, HTTPException, UploadFile, File
+from ..models.go_board import GoBoard, StoneColor
+from ..services.board_recognition import BoardRecognitionService
+from ..services.ml_board_recognition import MLBoardRecognitionService
+import os
+import logging
+from typing import Optional
+import tempfile
+import shutil
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 board = None  # Initialize as None
 analyzer = None
+board_recognition = BoardRecognitionService()
+ml_board_recognition = MLBoardRecognitionService()
 
 
 class MoveRequest(BaseModel):
@@ -146,3 +159,62 @@ async def get_state() -> GameState:
         can_redo=board.can_redo(),
         analysis=analysis,
     )
+
+
+@router.post("/api/game/from_image")
+async def create_game_from_image(
+    image: UploadFile = File(...),
+    use_ml: bool = True
+) -> dict:
+    """
+    Create a new game from an uploaded Go board image
+    """
+    try:
+        # Create a temporary file to store the uploaded image
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as temp_file:
+            # Copy uploaded file to temporary file
+            shutil.copyfileobj(image.file, temp_file)
+            temp_path = temp_file.name
+
+        try:
+            # Detect board state from image using ML or traditional CV
+            if use_ml:
+                board_state = ml_board_recognition.detect_board(temp_path)
+            else:
+                board_state = board_recognition.detect_board(temp_path)
+                
+            if board_state is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Failed to detect Go board in the image"
+                )
+
+            # Create new game with detected board state
+            game = GoBoard()
+            
+            # Apply detected moves
+            for y in range(len(board_state)):
+                for x in range(len(board_state[y])):
+                    if board_state[y][x] != StoneColor.EMPTY:
+                        if not game.place_stone(x, y, board_state[y][x]):
+                            logger.warning(
+                                f"Failed to place stone at ({x}, {y}) "
+                                f"with color {board_state[y][x]}"
+                            )
+
+            return {
+                "message": "Game created from image successfully",
+                "board": game.get_board_state(),
+                "current_color": game.get_current_color()
+            }
+
+        finally:
+            # Clean up temporary file
+            os.unlink(temp_path)
+
+    except Exception as e:
+        logger.error(f"Error processing image: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to process image: {str(e)}"
+        )

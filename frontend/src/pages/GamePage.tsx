@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { Layout, Card, Button, message, Row, Col, Empty } from 'antd';
+import { Layout, Card, Button, message, Row, Col, Empty, Space, Upload, Switch } from 'antd';
+import { UploadOutlined } from '@ant-design/icons';
 import GoBoard from '../components/GoBoard';
 import PositionAnalysis from '../components/PositionAnalysis';
 import axios from 'axios';
@@ -17,6 +18,8 @@ const GamePage: React.FC = () => {
   const [boardState, setBoardState] = useState<string[][]>(
     Array(19).fill(null).map(() => Array(19).fill('empty'))
   );
+  const [loading, setLoading] = useState(false);
+  const [useML, setUseML] = useState(true);
 
   const handleNewGame = async () => {
     try {
@@ -31,6 +34,34 @@ const GamePage: React.FC = () => {
     } catch (error) {
       message.error('创建新游戏失败');
     }
+  };
+
+  const handleCreateFromImage = async (file: File) => {
+    setLoading(true);
+    try {
+      const formData = new FormData();
+      formData.append('image', file);
+      formData.append('use_ml', useML.toString());
+
+      const response = await axios.post('http://localhost:8000/api/game/from_image', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      });
+
+      const { board: newBoard, current_color } = response.data;
+      setBoardState(newBoard);
+      setCurrentColor(current_color);
+      setCanUndo(false);
+      setCanRedo(false);
+      setGameStarted(true);
+      message.success('Game created from image!');
+    } catch (error) {
+      message.error('Failed to create game from image');
+    } finally {
+      setLoading(false);
+    }
+    return false; // Prevent default upload behavior
   };
 
   const handleMove = async (x: number, y: number, color: 'black' | 'white') => {
@@ -111,9 +142,43 @@ const GamePage: React.FC = () => {
             <Card 
               title="围棋对弈" 
               extra={
-                <Button type="primary" onClick={handleNewGame}>
-                  {gameStarted ? '重新开始' : '开始游戏'}
-                </Button>
+                <Space>
+                  <Button type="primary" onClick={handleNewGame}>
+                    {gameStarted ? '重新开始' : '开始游戏'}
+                  </Button>
+                  <Upload
+                    beforeUpload={handleCreateFromImage}
+                    showUploadList={false}
+                    accept="image/*"
+                  >
+                    <Button 
+                      icon={<UploadOutlined />} 
+                      loading={loading}
+                    >
+                      Create from Image
+                    </Button>
+                  </Upload>
+                  <Space>
+                    Use ML:
+                    <Switch
+                      checked={useML}
+                      onChange={setUseML}
+                      size="small"
+                    />
+                  </Space>
+                  <Button 
+                    onClick={handleUndo} 
+                    disabled={!canUndo}
+                  >
+                    Undo
+                  </Button>
+                  <Button 
+                    onClick={handleRedo} 
+                    disabled={!canRedo}
+                  >
+                    Redo
+                  </Button>
+                </Space>
               }
             >
               {!gameStarted ? (
