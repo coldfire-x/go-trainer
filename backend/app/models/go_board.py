@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import List, Tuple, Set, Optional
+from typing import List, Tuple, Set, Optional, Dict
 from pydantic import BaseModel
 
 
@@ -7,6 +7,13 @@ class StoneColor(str, Enum):
     BLACK = "black"
     WHITE = "white"
     EMPTY = "empty"
+
+    def opposite(self) -> 'StoneColor':
+        if self == StoneColor.BLACK:
+            return StoneColor.WHITE
+        elif self == StoneColor.WHITE:
+            return StoneColor.BLACK
+        return StoneColor.EMPTY
 
 
 class Stone(BaseModel):
@@ -25,10 +32,9 @@ class GoBoard:
         self.size = size
         self.board = [[StoneColor.EMPTY for _ in range(size)] for _ in range(size)]
         self.move_history: List[Tuple[int, int, StoneColor]] = []  # (x, y, color)
-        self.undone_moves: List[
-            Tuple[int, int, StoneColor]
-        ] = []  # Store undone moves for redo
+        self.undone_moves: List[Tuple[int, int, StoneColor]] = []  # Store undone moves for redo
         self.current_color = StoneColor.BLACK  # Track current color
+        self.ko_point: Optional[Tuple[int, int]] = None  # Store ko point to prevent immediate recapture
 
     def is_valid_position(self, x: int, y: int) -> bool:
         """Check if a position is within the board boundaries"""
@@ -51,19 +57,63 @@ class GoBoard:
         if color != self.current_color:
             return False
 
-        # Place the stone
+        # Check ko rule
+        if self.ko_point and (x, y) == self.ko_point:
+            return False
+
+        # Temporarily place the stone
         self.board[y][x] = color
+        
+        # Check if this move captures any opponent stones
+        captured_stones = self._find_captured_stones(x, y)
+        
+        # If no captures, check if the placed stone has liberties
+        if not captured_stones:
+            # Get the group of the placed stone
+            group = self.get_group(x, y)
+            # If the group has no liberties, this is an illegal move
+            if not self.get_liberties(group):
+                self.board[y][x] = StoneColor.EMPTY
+                return False
+
+        # Remove captured stones
+        for cx, cy in captured_stones:
+            self.board[cy][cx] = StoneColor.EMPTY
+
+        # Update ko point
+        self.ko_point = None
+        if len(captured_stones) == 1:
+            # If exactly one stone was captured, this might create a ko
+            # Check if the placed stone is in atari (has only one liberty)
+            group = self.get_group(x, y)
+            liberties = self.get_liberties(group)
+            if len(group) == 1 and len(liberties) == 1:
+                # This is a ko situation
+                self.ko_point = list(captured_stones)[0]
 
         # Add to history and clear undone moves
         self.move_history.append((x, y, color))
         self.undone_moves.clear()
 
         # Switch current color
-        self.current_color = (
-            StoneColor.WHITE if color == StoneColor.BLACK else StoneColor.BLACK
-        )
+        self.current_color = color.opposite()
 
         return True
+
+    def _find_captured_stones(self, x: int, y: int) -> Set[Tuple[int, int]]:
+        """Find all opponent stones that are captured by placing a stone at (x,y)"""
+        captured = set()
+        color = self.get_stone(x, y)
+        opponent_color = color.opposite()
+
+        # Check all neighboring groups
+        for nx, ny in self.get_neighbors(x, y):
+            if self.get_stone(nx, ny) == opponent_color:
+                group = self.get_group(nx, ny)
+                if not self.get_liberties(group):
+                    captured.update(group)
+
+        return captured
 
     def remove_stone(self, x: int, y: int) -> bool:
         """Remove a stone from the board"""
@@ -126,6 +176,9 @@ class GoBoard:
         self.undone_moves.append((x, y, color))
         self.board[y][x] = StoneColor.EMPTY
 
+        # Reset ko point
+        self.ko_point = None
+
         # Switch current color back
         self.current_color = color
 
@@ -137,15 +190,10 @@ class GoBoard:
             return None
 
         x, y, color = self.undone_moves.pop()
-        self.move_history.append((x, y, color))
-        self.board[y][x] = color
-
-        # Switch current color
-        self.current_color = (
-            StoneColor.WHITE if color == StoneColor.BLACK else StoneColor.BLACK
-        )
-
-        return (x, y)
+        # Place the stone using place_stone to handle captures correctly
+        if self.place_stone(x, y, color):
+            return (x, y)
+        return None
 
     def can_undo(self) -> bool:
         """Check if there are moves that can be undone"""
