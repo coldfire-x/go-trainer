@@ -22,7 +22,7 @@ class LifeDeathAnalyzer:
             group.add(current)
             cx, cy = current
 
-            for nx, ny in self.board.get_adjacent_positions(cx, cy):
+            for nx, ny in self.board.get_neighbors(cx, cy):
                 if self.board.board[ny][nx] == color and (nx, ny) not in group:
                     to_check.add((nx, ny))
 
@@ -35,7 +35,7 @@ class LifeDeathAnalyzer:
 
         # Find empty points surrounded by the group
         for x, y in group:
-            for nx, ny in self.board.get_adjacent_positions(x, y):
+            for nx, ny in self.board.get_neighbors(x, y):
                 if self.board.board[ny][nx] == StoneColor.EMPTY:
                     potential_eyes.add((nx, ny))
 
@@ -45,7 +45,7 @@ class LifeDeathAnalyzer:
             diagonal_empty = 0
             
             # Check adjacent points
-            for nx, ny in self.board.get_adjacent_positions(x, y):
+            for nx, ny in self.board.get_neighbors(x, y):
                 if (nx, ny) not in group:
                     surrounded = False
                     break
@@ -101,7 +101,7 @@ class LifeDeathAnalyzer:
 
         # Check liberties
         for gx, gy in group:
-            for nx, ny in self.board.get_adjacent_positions(gx, gy):
+            for nx, ny in self.board.get_neighbors(gx, gy):
                 if self.board.board[ny][nx] == StoneColor.EMPTY:
                     # Simulate placing a stone
                     original_board = [row[:] for row in self.board.board]
