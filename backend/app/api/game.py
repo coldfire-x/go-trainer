@@ -1,7 +1,7 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException
-from typing import List, Optional
+from typing import List, Optional, Tuple
 from pydantic import BaseModel
-from ..models.go_board import GoBoard, Stone, StoneColor
+from ..models.go_board import GoBoard, StoneColor
 from ..models.joseki import JosekiDatabase
 from ..models.life_death import LifeDeathAnalyzer
 from ..services.board_recognition import BoardRecognitionService
@@ -39,7 +39,7 @@ async def make_move(game_id: int, move: MoveRequest):
         raise HTTPException(status_code=400, detail="Invalid move")
         
     # Check for matching joseki patterns
-    moves = [(s.x, s.y, s.color) for s in board.move_history]
+    moves = board.get_move_history()
     matching_patterns = joseki_db.find_matching_pattern(moves)
     
     # Analyze the position after the move
@@ -132,7 +132,7 @@ async def get_joseki_suggestions(game_id: int):
         raise HTTPException(status_code=404, detail="Game not found")
         
     board = game_boards[game_id]
-    moves = [(s.x, s.y, s.color) for s in board.move_history]
+    moves = board.get_move_history()
     
     matching_patterns = joseki_db.find_matching_pattern(moves)
     next_moves = joseki_db.get_next_moves(moves)

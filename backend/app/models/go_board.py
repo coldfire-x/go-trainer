@@ -21,10 +21,11 @@ class GoBoard:
     def __init__(self, size: int = 19):
         self.size = size
         self.board = [[StoneColor.EMPTY for _ in range(size)] for _ in range(size)]
-        self.move_history: List[Tuple[int, int, str]] = []
+        self.move_history: List[Tuple[int, int, str]] = []  # (x, y, color)
         self.state_history: List[List[List[StoneColor]]] = []
         self.future_states: List[List[List[StoneColor]]] = []
-        self.current_color = StoneColor.BLACK  # Track current color
+        self.undone_moves: List[Tuple[int, int, str]] = []  # Store undone moves for redo
+        self.current_color = StoneColor.BLACK.value  # Track current color
         self.save_state()
 
     def is_valid_position(self, x: int, y: int) -> bool:
@@ -35,7 +36,7 @@ class GoBoard:
             return False
         if self.board[y][x] != StoneColor.EMPTY:
             return False
-        if StoneColor(color) != self.current_color:
+        if color != self.current_color:
             return False  # Wrong color for current turn
             
         # Clear future states when making a new move
@@ -49,7 +50,7 @@ class GoBoard:
         self.move_history.append((x, y, color))
         
         # Switch current color
-        self.current_color = StoneColor.WHITE if self.current_color == StoneColor.BLACK else StoneColor.BLACK
+        self.current_color = StoneColor.WHITE.value if color == StoneColor.BLACK.value else StoneColor.BLACK.value
         
         return True
 
@@ -109,7 +110,7 @@ class GoBoard:
 
     def undo_move(self) -> Optional[Tuple[int, int, str]]:
         """Undo the last move and return the undone move"""
-        if not self.state_history:
+        if not self.move_history:
             return None
             
         # Save current state to future states for redo
@@ -122,42 +123,37 @@ class GoBoard:
         if self.move_history:
             last_move = self.move_history.pop()
             # Switch back to previous color
-            self.current_color = StoneColor(last_move[2])
+            self.current_color = last_move[2]
+            self.undone_moves.append(last_move)
             return last_move
             
         return None
 
     def redo_move(self) -> Optional[Tuple[int, int, str]]:
         """Redo a previously undone move"""
-        if not self.future_states:
+        if not self.undone_moves:
             return None
             
         # Save current state to history
         self.save_state()
         
         # Restore next state
-        next_state = self.future_states.pop()
-        self.restore_state(next_state)
+        next_move = self.undone_moves.pop()
+        self.move_history.append(next_move)
+        self.board[next_move[1]][next_move[0]] = StoneColor(next_move[2])
         
-        # Find the move that was redone by comparing states
-        for y in range(self.size):
-            for x in range(self.size):
-                if self.board[y][x] != StoneColor.EMPTY and (x, y, self.board[y][x].value) not in self.move_history:
-                    move = (x, y, self.board[y][x].value)
-                    self.move_history.append(move)
-                    # Switch to next color
-                    self.current_color = StoneColor.WHITE if StoneColor(move[2]) == StoneColor.BLACK else StoneColor.BLACK
-                    return move
-                    
-        return None
+        # Switch current color
+        self.current_color = StoneColor.WHITE.value if next_move[2] == StoneColor.BLACK.value else StoneColor.BLACK.value
+        
+        return next_move
 
     def can_undo(self) -> bool:
         """Check if there are moves that can be undone"""
-        return len(self.state_history) > 0
+        return len(self.move_history) > 0
 
     def can_redo(self) -> bool:
         """Check if there are moves that can be redone"""
-        return len(self.future_states) > 0
+        return len(self.undone_moves) > 0
 
     def get_board_state(self) -> List[List[str]]:
         """Get the current board state"""
@@ -169,4 +165,4 @@ class GoBoard:
 
     def get_current_color(self) -> str:
         """Get the current player's color"""
-        return self.current_color.value
+        return self.current_color
