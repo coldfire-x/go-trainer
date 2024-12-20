@@ -10,8 +10,8 @@ class LifeDeathAnalyzer:
         if not self.board.is_valid_position(x, y):
             return set()
             
-        color = self.board.get_stone(x, y)
-        if color == StoneColor.EMPTY:
+        stone = self.board.get_stone(x, y)
+        if stone == StoneColor.EMPTY:
             return set()
             
         group = set()
@@ -24,7 +24,7 @@ class LifeDeathAnalyzer:
                 
             group.add((cx, cy))
             for nx, ny in self.board.get_neighbors(cx, cy):
-                if (nx, ny) not in group and self.board.get_stone(nx, ny) == color:
+                if (nx, ny) not in group and self.board.get_stone(nx, ny) == stone:
                     to_check.append((nx, ny))
                     
         return group
@@ -45,14 +45,14 @@ class LifeDeathAnalyzer:
             
         # Get color of the group
         x, y = next(iter(group))
-        color = self.board.get_stone(x, y)
+        stone = self.board.get_stone(x, y)
         
         # Find all adjacent points
         adjacent_points = set()
         for x, y in group:
             for nx, ny in self.board.get_neighbors(x, y):
-                stone = self.board.get_stone(nx, ny)
-                if stone != StoneColor.EMPTY and stone != color:
+                adj_stone = self.board.get_stone(nx, ny)
+                if adj_stone != StoneColor.EMPTY and adj_stone != stone:
                     adjacent_points.add((nx, ny))
                     
         # Get groups for each adjacent point
@@ -77,10 +77,10 @@ class LifeDeathAnalyzer:
         adjacent_groups = self._get_adjacent_groups(group)
         
         # Get color of the group
-        color = self.board.get_stone(x, y)
+        stone = self.board.get_stone(x, y)
         
         analysis = {
-            "color": color.value,
+            "color": stone.value,  # Now stone is guaranteed to be a StoneColor enum
             "size": len(group),
             "liberties": len(liberties),
             "liberty_points": list(liberties),
@@ -153,10 +153,10 @@ class LifeDeathAnalyzer:
             vital_points.extend(liberties)
             
         # Add points that would connect to other friendly groups
-        color = self.board.get_stone(x, y)
+        stone = self.board.get_stone(x, y)
         for lx, ly in liberties:
             for nx, ny in self.board.get_neighbors(lx, ly):
-                if self.board.get_stone(nx, ny) == color and (nx, ny) not in group:
+                if self.board.get_stone(nx, ny) == stone and (nx, ny) not in group:
                     vital_points.append((lx, ly))
                     break
                     
