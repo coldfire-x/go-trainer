@@ -49,15 +49,28 @@ const GamePage: React.FC = () => {
         },
       });
 
-      const { board: newBoard, current_color } = response.data;
+      console.log('API Response:', response.data);
+
+      const { board: newBoard, current_color, can_undo, can_redo, message } = response.data;
+      
+      if (!newBoard || !Array.isArray(newBoard)) {
+        throw new Error('Invalid board data received');
+      }
+
       setBoardState(newBoard);
       setCurrentColor(current_color);
-      setCanUndo(false);
-      setCanRedo(false);
+      setCanUndo(can_undo);
+      setCanRedo(can_redo);
       setGameStarted(true);
-      message.success('Game created from image!');
-    } catch (error) {
-      message.error('Failed to create game from image');
+      message.success(message || 'Game created from image!');
+    } catch (error: any) {
+      message.error(
+        error.response?.data?.detail || 
+        error.message || 
+        'Failed to create game from image'
+      );
+      console.error('Error:', error);
+      console.error('Response:', error.response?.data);
     } finally {
       setLoading(false);
     }
