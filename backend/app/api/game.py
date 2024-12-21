@@ -12,7 +12,7 @@ import shutil
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api")  # Add prefix here
+router = APIRouter()  # No prefix here
 board = None  # Initialize as None
 analyzer = None
 board_recognition = BoardRecognitionService()
@@ -98,19 +98,14 @@ async def undo_move() -> GameState:
         raise HTTPException(status_code=400, detail="No moves to undo")
 
     position = board.undo_move()
-
-    # Get analysis for the last move if it exists
-    analysis = None
-    if position:
-        x, y = position
-        analysis = analyzer.analyze_group(x, y)
+    position_analysis = None if position is None else analyzer.analyze_group(*position)
 
     return GameState(
         board=board.get_board_state(),
         current_color=board.get_current_color().value,
         can_undo=board.can_undo(),
         can_redo=board.can_redo(),
-        analysis=analysis,
+        analysis=position_analysis,
     )
 
 
@@ -122,19 +117,14 @@ async def redo_move() -> GameState:
         raise HTTPException(status_code=400, detail="No moves to redo")
 
     position = board.redo_move()
-
-    # Get analysis for the redone move
-    analysis = None
-    if position:
-        x, y = position
-        analysis = analyzer.analyze_group(x, y)
+    position_analysis = None if position is None else analyzer.analyze_group(*position)
 
     return GameState(
         board=board.get_board_state(),
         current_color=board.get_current_color().value,
         can_undo=board.can_undo(),
         can_redo=board.can_redo(),
-        analysis=analysis,
+        analysis=position_analysis,
     )
 
 
@@ -142,19 +132,19 @@ async def redo_move() -> GameState:
 async def get_state() -> GameState:
     board, analyzer = get_current_game()
 
-    # Get the last move position if it exists
-    analysis = None
-    history = board.get_move_history()
-    if history:
-        x, y, _ = history[-1]
-        analysis = analyzer.analyze_group(x, y)
+    # Get the last move position
+    last_move = board.get_last_move()
+    position_analysis = None
+    if last_move:
+        x, y, _ = last_move
+        position_analysis = analyzer.analyze_group(x, y)
 
     return GameState(
         board=board.get_board_state(),
         current_color=board.get_current_color().value,
         can_undo=board.can_undo(),
         can_redo=board.can_redo(),
-        analysis=analysis,
+        analysis=position_analysis,
     )
 
 
@@ -168,66 +158,90 @@ async def create_game_from_image(
     """
     logger.info(f"Processing image upload, use_ml: {use_ml}")
     try:
+        # Validate file type
+        if not image.content_type.startswith('image/'):
+            raise HTTPException(
+                status_code=400,
+                detail="Uploaded file must be an image"
+            )
+
         # Create a temporary file to store the uploaded image
         with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as temp_file:
-            # Copy uploaded file to temporary file
-            shutil.copyfileobj(image.file, temp_file)
-            temp_path = temp_file.name
-
-        try:
-            # Detect board state from image using ML or traditional CV
-            if use_ml:
-                logger.info("Using ML for board detection")
-                board_state = ml_board_recognition.detect_board(temp_path)
-            else:
-                logger.info("Using traditional CV for board detection")
-                board_state = board_recognition.detect_board(temp_path)
+            try:
+                # Copy uploaded file to temporary file
+                shutil.copyfileobj(image.file, temp_file)
+                temp_path = temp_file.name
                 
-            if board_state is None:
-                logger.error("Failed to detect board state")
-                raise HTTPException(
-                    status_code=400,
-                    detail="Failed to detect Go board in the image"
-                )
+                # Detect board state from image using ML or traditional CV
+                if use_ml:
+                    logger.info("Using ML for board detection")
+                    detection_result = ml_board_recognition.detect_board(temp_path)
+                else:
+                    logger.info("Using traditional CV for board detection")
+                    detection_result = board_recognition.detect_board(temp_path)
+                
+                # Check detection result
+                if detection_result is None:
+                    logger.error("Failed to detect board state")
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Failed to detect Go board in the image. Please ensure the image shows a clear view of the board."
+                    )
+                
+                try:
+                    board_state, corner_type = detection_result
+                except (TypeError, ValueError) as e:
+                    logger.error(f"Invalid detection result format: {e}")
+                    raise HTTPException(
+                        status_code=500,
+                        detail="Internal error: Invalid board detection result format"
+                    )
 
-            # Create new game with detected board state
-            global board
-            board = GoBoard()
-            
-            # Apply detected moves
-            stones_placed = 0
-            for y in range(len(board_state)):
-                for x in range(len(board_state[y])):
-                    if board_state[y][x] != StoneColor.EMPTY:
-                        if board.place_stone(x, y, board_state[y][x]):
-                            stones_placed += 1
-                        else:
-                            logger.warning(
-                                f"Failed to place stone at ({x}, {y}) "
-                                f"with color {board_state[y][x]}"
-                            )
+                # Create new game with detected board state
+                global board, analyzer
+                board = GoBoard()
+                analyzer = LifeDeathAnalyzer(board)
+                
+                # Apply detected moves
+                stones_placed = 0
+                failed_placements = []
+                for y in range(len(board_state)):
+                    for x in range(len(board_state[y])):
+                        if board_state[y][x] != StoneColor.EMPTY:
+                            if board.place_stone(x, y, board_state[y][x]):
+                                stones_placed += 1
+                            else:
+                                failed_placements.append((x, y, board_state[y][x].value))
 
-            logger.info(f"Successfully placed {stones_placed} stones")
-            
-            # Get current board state
-            current_state = board.get_board_state()
-            logger.info(f"Current board state: {current_state}")
+                logger.info(f"Successfully placed {stones_placed} stones")
+                if failed_placements:
+                    logger.warning(f"Failed to place stones at: {failed_placements}")
+                
+                # Get current board state
+                current_state = board.get_board_state()
 
-            response_data = {
-                "message": f"Game created from image successfully with {stones_placed} stones",
-                "board": current_state,
-                "current_color": board.get_current_color(),
-                "can_undo": board.can_undo(),
-                "can_redo": board.can_redo()
-            }
-            
-            logger.info(f"Sending response: {response_data}")
-            return response_data
+                response_data = {
+                    "message": f"Game created from image successfully with {stones_placed} stones",
+                    "board": current_state,
+                    "current_color": board.get_current_color().value,
+                    "can_undo": board.can_undo(),
+                    "can_redo": board.can_redo(),
+                    "corner_type": corner_type,
+                    "failed_placements": failed_placements if failed_placements else None
+                }
+                
+                logger.info(f"Sending response: {response_data}")
+                return response_data
 
-        finally:
-            # Clean up temporary file
-            os.unlink(temp_path)
+            finally:
+                # Clean up temporary file
+                try:
+                    os.unlink(temp_path)
+                except Exception as e:
+                    logger.warning(f"Failed to delete temporary file: {str(e)}")
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error processing image: {str(e)}", exc_info=True)
         raise HTTPException(
