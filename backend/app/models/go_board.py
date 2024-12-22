@@ -190,10 +190,16 @@ class GoBoard:
             return None
 
         x, y, color = self.undone_moves.pop()
-        # Place the stone using place_stone to handle captures correctly
-        if self.place_stone(x, y, color):
-            return (x, y)
-        return None
+        self.board[y][x] = color
+        self.move_history.append((x, y, color))
+        
+        # Update current color
+        self.current_color = color.opposite()
+        
+        # Reset ko point as it might have changed
+        self.ko_point = None
+        
+        return (x, y)
 
     def can_undo(self) -> bool:
         """Check if there are moves that can be undone"""
@@ -203,14 +209,18 @@ class GoBoard:
         """Check if there are moves that can be redone"""
         return len(self.undone_moves) > 0
 
-    def get_board_state(self) -> List[List[str]]:
+    def get_board_state(self) -> List[List[StoneColor]]:
         """Get the current board state"""
-        return [[stone.value for stone in row] for row in self.board]
+        return [[cell for cell in row] for row in self.board]
 
     def get_move_history(self) -> List[Tuple[int, int, StoneColor]]:
         """Get the history of moves"""
-        return self.move_history.copy()
+        return list(self.move_history)
 
     def get_current_color(self) -> StoneColor:
         """Get the current player's color"""
         return self.current_color
+
+    def get_last_move(self) -> Optional[Tuple[int, int, StoneColor]]:
+        """Get the last move played"""
+        return self.move_history[-1] if self.move_history else None

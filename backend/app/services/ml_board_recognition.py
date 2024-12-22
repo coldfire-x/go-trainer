@@ -131,13 +131,18 @@ class MLBoardRecognitionService:
             # Convert to grayscale
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             
-            # Apply adaptive thresholding
+            # Apply adaptive thresholding with smaller block size for better local contrast
             thresh = cv2.adaptiveThreshold(
                 gray, 255,
                 cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
                 cv2.THRESH_BINARY_INV,
-                11, 2
+                7, 2  # Reduced block size from 11 to 7
             )
+            
+            # Apply morphological operations to clean up the image
+            kernel = np.ones((3,3), np.uint8)
+            thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+            thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
             
             # Find contours
             contours, _ = cv2.findContours(
@@ -157,46 +162,50 @@ class MLBoardRecognitionService:
             
             # Extract board region
             board_img = img[y:y+h, x:x+w]
+            board_gray = gray[y:y+h, x:x+w]
             
             # Create empty board
             board = [[StoneColor.EMPTY for _ in range(self.board_size)] 
                     for _ in range(self.board_size)]
             
             # Calculate cell size
-            cell_width = w / self.board_size
-            cell_height = h / self.board_size
+            cell_width = w / (self.board_size - 1)
+            cell_height = h / (self.board_size - 1)
+            
+            # Detect stones using Hough circles
+            circles = cv2.HoughCircles(
+                board_gray,
+                cv2.HOUGH_GRADIENT,
+                dp=1,
+                minDist=min(cell_width, cell_height) * 0.8,  # Minimum distance between circles
+                param1=50,
+                param2=30,
+                minRadius=int(min(cell_width, cell_height) * 0.2),
+                maxRadius=int(min(cell_width, cell_height) * 0.5)
+            )
             
             stones_detected = []
-            
-            # Analyze each intersection
-            for i in range(self.board_size):
-                for j in range(self.board_size):
-                    # Get intersection region
-                    cell_x = int(j * cell_width)
-                    cell_y = int(i * cell_height)
-                    cell_w = int(cell_width)
-                    cell_h = int(cell_height)
+            if circles is not None:
+                circles = np.uint16(np.around(circles))
+                for circle in circles[0, :]:
+                    cx, cy, r = circle
                     
-                    if cell_x + cell_w > w or cell_y + cell_h > h:
-                        continue
-                        
-                    cell = board_img[cell_y:cell_y+cell_h, cell_x:cell_x+cell_w]
+                    # Get the average intensity in the circle area
+                    mask = np.zeros(board_gray.shape, np.uint8)
+                    cv2.circle(mask, (cx, cy), r, 255, -1)
+                    mean_val = cv2.mean(board_gray, mask=mask)[0]
                     
-                    # Convert to grayscale
-                    cell_gray = cv2.cvtColor(cell, cv2.COLOR_BGR2GRAY)
+                    # Map to board coordinates
+                    board_x = int(round(cx / cell_width))
+                    board_y = int(round(cy / cell_height))
                     
-                    # Calculate mean and std of the cell
-                    mean_val = np.mean(cell_gray)
-                    std_val = np.std(cell_gray)
-                    
-                    # Detect stones based on intensity
-                    if std_val > 30:  # There's significant variation in the cell
-                        if mean_val < 100:  # Dark stone
-                            board[i][j] = StoneColor.BLACK
-                            stones_detected.append((j, i))
-                        elif mean_val > 150:  # Light stone
-                            board[i][j] = StoneColor.WHITE
-                            stones_detected.append((j, i))
+                    if 0 <= board_x < self.board_size and 0 <= board_y < self.board_size:
+                        # Determine stone color based on intensity
+                        if mean_val < 128:  # Dark stone
+                            board[board_y][board_x] = StoneColor.BLACK
+                        else:  # Light stone
+                            board[board_y][board_x] = StoneColor.WHITE
+                        stones_detected.append((board_x, board_y))
             
             if not stones_detected:
                 return None
@@ -207,16 +216,22 @@ class MLBoardRecognitionService:
             min_y = min(y for _, y in stones_detected)
             max_y = max(y for _, y in stones_detected)
             
-            # Determine board section
+            # Calculate board section
+            center_x = (max_x + min_x) / 2
+            center_y = (max_y + min_y) / 2
+            
+            # Determine corner type based on center position
             corner_type = 'middle'
-            if min_x < 5 and min_y < 5:
-                corner_type = 'top_left'
-            elif max_x > 13 and min_y < 5:
-                corner_type = 'top_right'
-            elif min_x < 5 and max_y > 13:
-                corner_type = 'bottom_left'
-            elif max_x > 13 and max_y > 13:
-                corner_type = 'bottom_right'
+            if center_x < self.board_size * 0.4:
+                if center_y < self.board_size * 0.4:
+                    corner_type = 'top_left'
+                elif center_y > self.board_size * 0.6:
+                    corner_type = 'bottom_left'
+            elif center_x > self.board_size * 0.6:
+                if center_y < self.board_size * 0.4:
+                    corner_type = 'top_right'
+                elif center_y > self.board_size * 0.6:
+                    corner_type = 'bottom_right'
             
             return board, corner_type
             
